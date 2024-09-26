@@ -4,5 +4,5 @@ from itertools import combinations
 
 # 데이터 로드
 data = pd.read_csv('labeled_data.csv')
-print(data.head(1))
-print(data['cluster'].unique())
+
+print(data.head())
