@@ -98,13 +98,25 @@ def train_lightgbm_model(train: pd.DataFrame, test: pd.DataFrame) -> Tuple[lgb.B
 
     return model, top_features
 
-def forecast(train: pd.DataFrame, test: pd.DataFrame, model: lgb.Booster, top_features: List[str]) -> pd.DataFrame:
-    forecast = pd.DataFrame(index=test.index)
-    forecast[TARGET_COLUMN] = model.predict(test[top_features])
+def fit_and_forecast(train: pd.DataFrame, test: pd.DataFrame, frequency: str, pci: str, model: lgb.Booster, top_features: List[str]) -> Tuple[str, pd.Series]:
+    feature_columns = [col for col in top_features if col != frequency]
+    train_data = lgb.Dataset(train[pci][feature_columns], label=train[pci][frequency])
     
-    for col in RB_COLUMNS:
-        forecast[col] = test[col]  # Assuming we're using actual RB values for simplicity
+    params = model.params
+    frequency_model = lgb.train(params, train_data, num_boost_round=model.best_iteration)
+    
+    forecast_result = frequency_model.predict(test[pci][feature_columns])
+    return (frequency, pd.Series(forecast_result, index=test[pci].index))
 
+def forecast(train: pd.DataFrame, test: pd.DataFrame, pci: str, model: lgb.Booster, top_features: List[str]) -> pd.DataFrame:
+    forecast = pd.DataFrame()
+    results = Parallel(n_jobs=N_JOBS)(
+        delayed(fit_and_forecast)(train, test, frequency, pci, model, top_features) 
+        for frequency in tqdm(RB_COLUMNS, desc="Forecasting")
+    )
+    for frequency, result in results:
+        forecast[frequency] = result
+    forecast['RBused'] = forecast[RB_COLUMNS].sum(axis=1)
     return forecast
 
 def evaluate(actual: pd.DataFrame, forecast: pd.DataFrame) -> Tuple[float, float, float]:

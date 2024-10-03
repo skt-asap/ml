@@ -54,16 +54,22 @@ def greedy_search(train: pd.Series, train_excluded: pd.DataFrame) -> List[Tuple[
 
     return optimal
 
-def fit_and_forecast(train: pd.DataFrame, test: pd.DataFrame, frequency: str, pci: str, optimal: Tuple[Tuple[int, int, int], float]) -> Tuple[str, pd.Series]:
-    model = SARIMAX(train[pci][frequency], exog=train[pci][RB_COLUMNS].drop(columns=[frequency]), order=optimal[0])
-    model_fit = model.fit(disp=False)
-    forecast_steps = len(test[pci][frequency])
-    forecast_result = model_fit.forecast(steps=forecast_steps, exog=test[pci][RB_COLUMNS].drop(columns=[frequency]).iloc[:forecast_steps])
-    return (frequency, forecast_result)
+def fit_and_forecast(train: pd.DataFrame, test: pd.DataFrame, frequency: str, model: lgb.Booster, top_features: List[str]) -> Tuple[str, pd.Series]:
+    feature_columns = [col for col in top_features if col != frequency]
+    train_data = lgb.Dataset(train[feature_columns], label=train[frequency])
+    
+    params = model.params
+    frequency_model = lgb.train(params, train_data, num_boost_round=model.best_iteration)
+    
+    forecast_result = frequency_model.predict(test[feature_columns])
+    return (frequency, pd.Series(forecast_result, index=test.index))
 
-def forecast(train: pd.DataFrame, test: pd.DataFrame, pci: str, optimal: Tuple[Tuple[int, int, int], float]) -> pd.DataFrame:
+def forecast(train: pd.DataFrame, test: pd.DataFrame, model: lgb.Booster, top_features: List[str]) -> pd.DataFrame:
     forecast = pd.DataFrame()
-    results = Parallel(n_jobs=N_JOBS)(delayed(fit_and_forecast)(train, test, frequency, pci, optimal) for frequency in tqdm(RB_COLUMNS, desc="Forecasting"))
+    results = Parallel(n_jobs=N_JOBS)(
+        delayed(fit_and_forecast)(train, test, frequency, model, top_features) 
+        for frequency in tqdm(RB_COLUMNS, desc="Forecasting")
+    )
     for frequency, result in results:
         forecast[frequency] = result
     forecast['RBused'] = forecast[RB_COLUMNS].sum(axis=1)
